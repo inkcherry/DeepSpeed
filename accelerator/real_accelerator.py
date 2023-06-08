@@ -56,9 +56,12 @@ def get_accelerator():
         if accelerator_name == 'xpu':
             try:
                 from intel_extension_for_deepspeed import XPU_Accelerator  # noqa: F401
-            except ImportError as e:
-                raise ValueError(
-                    f'XPU_Accelerator requires intel_extension_for_deepspeed, which is not installed on this system.')
+            except:
+                try:
+                    import intel_extension_for_pytorch
+                    from .xpu_accelerator import XPU_Accelerator
+                except ImportError as e:
+                    raise ValueError(f'XPU_Accelerator requires intel_extension_for_deepspeed or intel_extension_for_pytorch, which is not installed on this system.')
         elif accelerator_name == 'cpu':
             try:
                 import intel_extension_for_pytorch  # noqa: F401
@@ -90,6 +93,7 @@ def get_accelerator():
             #    between installation time and runtime.
             try:
                 import intel_extension_for_pytorch  # noqa: F401,F811
+                # Autodetect only choose CPU here
                 accelerator_name = 'cpu'
             except ImportError as e:
                 accelerator_name = 'cuda'
