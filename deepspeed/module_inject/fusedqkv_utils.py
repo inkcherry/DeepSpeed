@@ -4,7 +4,7 @@
 # DeepSpeed Team
 import torch
 from deepspeed.utils.logging import warning_once
-from deepspeed.utils.tp_shard import get_shard_size,get_shard_size_list
+from deepspeed.utils.tp_shard import get_shard_size, get_shard_size_list
 import deepspeed.utils.tp_shard as tp_shard
 import re
 
@@ -41,7 +41,8 @@ def prepare_tp_fused_qkvw(module_str, src, mp_size, gpu_index):
 
     def _codegen_type_transpose(input, mp_size, codegen_mp_num=4):
         # codegen_mp_num defined in https://github.com/huggingface/transformers/blob/main/src/transformers/models/codegen/modeling_codegen.py
-        assert tp_shard.num_kv_heads % (mp_size*codegen_mp_num) == 0, "codgen autoTP requires num_kv_heads % (mp_size*codegen_mp_num) == 0"
+        assert tp_shard.num_kv_heads % (
+            mp_size * codegen_mp_num) == 0, "codgen autoTP requires num_kv_heads % (mp_size*codegen_mp_num) == 0"
         #input : [3*hidden_dim, hidden_dim](weight) or [3*hidden_dim](bias)
 
         shape = input.shape
@@ -57,7 +58,6 @@ def prepare_tp_fused_qkvw(module_str, src, mp_size, gpu_index):
 
         return tp_fuseqkv_weight[gpu_index * dst_shape:(gpu_index + 1) * dst_shape]
 
-
     def _glm_type_transpose(input, mp_size):
         #input : [3*hidden_dim, hidden_dim](weight) or [3*hidden_dim](bias)
 
@@ -69,8 +69,8 @@ def prepare_tp_fused_qkvw(module_str, src, mp_size, gpu_index):
 
     def _bloom_type_transpose(input, mp_size):
         shape = input.shape
-        
-        split_fusedqkv = input.split(get_shard_size_list(shape[0] , mp_size) ,dim=0)
+
+        split_fusedqkv = input.split(get_shard_size_list(shape[0], mp_size), dim=0)
         return split_fusedqkv[gpu_index]
 
     def _transpose_fused_qkvw(src, mp_size, fused_qkv_type=None):
