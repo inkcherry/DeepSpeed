@@ -2829,6 +2829,10 @@ class DeepSpeedEngine(Module):
 
         optim_checkpoint = None
         if load_module_only:
+            if load_lr_scheduler_states or load_optimizer_states:
+                logger.warning(
+                    f"Loading module only. Ignoring load_lr_scheduler_states={load_lr_scheduler_states} and load_optimizer_states={load_optimizer_states}."
+                )
             deepspeed_states = ['module']
             if self.optimizer is not None and self.fp16_enabled():
                 self.optimizer.refresh_fp32_params()
