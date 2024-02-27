@@ -26,10 +26,6 @@ import torch.nn.functional as F
 from deepspeed.utils import groups
 from .mappings import drop_tokens, gather_tokens
 
-# For debug print
-# import os
-# local_rank = int(os.getenv("LOCAL_RANK", "0"))
-
 if TYPE_CHECKING:
     Base = Module[Tensor]
 else:
@@ -224,7 +220,7 @@ def top1gating(logits: Tensor,
     # gating decisions
     # HPU Enable Begin
     # exp_counts = torch.sum(mask1, dim=0).detach().to('cpu')
-    # it's never used only if drop tokens is false
+    # WA, it's never used only if drop tokens is false
     exp_counts = None
 
     # torch.distributions.Distribution.set_default_validate_args(False)
@@ -310,7 +306,10 @@ def top2gating(logits: Tensor, capacity_factor: float, min_capacity: int) -> Tup
     capacity = _capacity(gates, torch.tensor(capacity_factor * 2), torch.tensor(min_capacity))
 
     # Create a mask for 1st's expert per token
-    indices1_s = torch.argmax(gates, dim=1)
+    # HPU Enable Begin
+    #indices1_s = torch.argmax(gates, dim=1)
+    indices1_s = torch.argmax(gates, dim=1).to(dtype=logits.dtype)
+    # HPU Enable End
     num_experts = int(gates.shape[1])
     mask1 = F.one_hot(indices1_s, num_classes=num_experts)
 
@@ -319,7 +318,10 @@ def top2gating(logits: Tensor, capacity_factor: float, min_capacity: int) -> Tup
     logits_w_noise = logits + gumbel_rsample(logits.shape, device=logits.device)
     # Replace top-expert with min value
     logits_except1 = logits_w_noise.masked_fill(mask1.bool(), float("-inf"))
-    indices2_s = torch.argmax(logits_except1, dim=1)
+    # HPU Enable Begin
+    #indices2_s = torch.argmax(logits_except1, dim=1)
+    indices2_s = torch.argmax(logits_except1, dim=1).to(dtype=logits.dtype)
+    # HPU Enable End
     mask2 = F.one_hot(indices2_s, num_classes=num_experts)
 
     # Compute locations in capacity buffer
@@ -329,11 +331,17 @@ def top2gating(logits: Tensor, capacity_factor: float, min_capacity: int) -> Tup
     locations2 += torch.sum(mask1, dim=0, keepdim=True)
 
     # gating decisions
-    exp_counts = torch.sum(mask1, dim=0).detach().to('cpu')
+    # HPU Enable Begin
+    #exp_counts = torch.sum(mask1, dim=0).detach().to('cpu')
+    exp_counts = None # WA, never used
+    # HPU Enable End
 
     # Compute l_aux
     me = torch.mean(gates, dim=0)
-    ce = torch.mean(mask1.float(), dim=0)
+    # HPU Enable Begin
+    #ce = torch.mean(mask1.float(), dim=0)
+    ce = torch.mean(mask1.float(), dim=0, dtype=torch.float)
+    # HPU Enable End
     l_aux = torch.mean(me * ce) * num_experts * num_experts
 
     # Remove locations outside capacity from mask
@@ -347,8 +355,12 @@ def top2gating(logits: Tensor, capacity_factor: float, min_capacity: int) -> Tup
     # Normalize gate probabilities
     mask1_float = mask1.float()
     mask2_float = mask2.float()
-    gates1_s = einsum("se,se->s", gates, mask1_float)
-    gates2_s = einsum("se,se->s", gates, mask2_float)
+    # HPU Enable Begin
+    #gates1_s = einsum("se,se->s", gates, mask1_float)
+    #gates2_s = einsum("se,se->s", gates, mask2_float)
+    gates1_s = einsum("se,se->s", gates.to(torch.bfloat16), mask1.to(torch.bfloat16)).to(dtype=logits.dtype)
+    gates2_s = einsum("se,se->s", gates.to(torch.bfloat16), mask2.to(torch.bfloat16)).to(dtype=logits.dtype)
+    # HPU Enable End
     denom_s = gates1_s + gates2_s
     # Avoid divide-by-zero
     denom_s = torch.clamp(denom_s, min=torch.finfo(denom_s.dtype).eps)
@@ -434,8 +446,7 @@ class TopKGate(Module):
         if self.noisy_gate_policy == 'Jitter' and self.training:
             input = multiplicative_jitter(input, device=input.device)
         #logits = self.wg(input_fp32)
-        logits = self.wg(input)
-        logits_fp32 = logits.float()
+        logits_fp32 = self.wg(input).float()
 
         if self.k == 1:
             gate_output = top1gating(logits_fp32, self.capacity_factor if self.training else self.eval_capacity_factor,
@@ -543,9 +554,7 @@ class MOELayer(Base):
             # reducing the all-to-all communication volume.
             dispatched_input = drop_tokens(dispatched_input, dim=1)
 
-        #print(f"Rank{local_rank}, 1: {dispatched_input.shape}")
         dispatched_input = _AllToAll.apply(self.ep_group, dispatched_input)
-        #print(f"Rank{local_rank}, 2: {dispatched_input.shape}")
 
         if self.wall_clock_breakdown:
             self.timers(FIRST_ALLTOALL_TIMER).stop()
@@ -553,16 +562,13 @@ class MOELayer(Base):
 
         # Re-shape after all-to-all: ecm -> gecm
         dispatched_input = dispatched_input.reshape(self.ep_size, self.num_local_experts, -1, d_model)
-        #print(f"Rank{local_rank}, 3: {dispatched_input.shape}")
 
         expert_output = self.experts(dispatched_input)
-        #print(f"Rank{local_rank}, 4: {expert_output.shape}")
 
         if self.wall_clock_breakdown:
             self.timers(SECOND_ALLTOALL_TIMER).start()
 
         expert_output = _AllToAll.apply(self.ep_group, expert_output)
-        #print(f"Rank{local_rank}, 5: {expert_output.shape}")
 
         if self.wall_clock_breakdown:
             self.timers(SECOND_ALLTOALL_TIMER).stop()
