@@ -359,11 +359,24 @@ class BF16_Optimizer(ZeROOptimizer):
             self.fp32_groups_has_gradients[i] = [False] * len(group)
 
     def clear_lp_grads(self):
-        for group in self.bf16_groups:
-            for param in group:
-                if param.grad is not None:
-                    # Using zero_() fixed memory address for graph replay
-                    param.grad.zero_()
+
+        def _clear_lp_grads():
+            for group in self.bf16_groups:
+                for param in group:
+                    param.grad = None
+
+        def _zero_lp_grads():
+            for group in self.bf16_groups:
+                for param in group:
+                    if param.grad is not None:
+                        param.grad.zero_()
+
+        if self.graph_harvesting:
+            # using grad.zero_() fixed memory address for graph replay
+            # not only the zero_ itself, but also the subsequent grad update graph replay
+            graph_process(False, _zero_lp_grads)
+        else:
+            _clear_lp_grads()
 
     def state_dict(self):
         state_dict = {}
