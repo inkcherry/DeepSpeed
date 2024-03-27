@@ -141,5 +141,8 @@ def split_params_into_different_moe_groups_for_optimizer(param_groups: Tuple[Dic
         for k, v in group_moe.items():
             for k1, v1 in v.items():
                 param_groups.append(v1)
+    return param_groups
 
-    return tuple(param_groups)
+
+def is_moe_param_group(param_group):
+    return param_group.get('moe', False)

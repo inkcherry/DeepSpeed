@@ -196,6 +196,15 @@ def has_overflow_serial_hpu(params):
             inf_or_nan = nan.logical_or(inf)
             invalid_grad_count += inf_or_nan.float().max()
     return invalid_grad_count
+def get_norm_with_moe_layers_fast(all_groups_norm, group):
+    # This implementation standardizes the grad_norm across ranks. A more precise implementation can be found in 'get_norm_with_moe_layers'.
+    # Need to allreduce (avg) the norms across different ranks because moe params will not be synced during allreduce
+    scaled_norm = all_groups_norm * 1.0 / float(dist.get_world_size(group=group))
+    scaled_norm_tensor = torch.tensor(scaled_norm, device=get_accelerator().current_device(), dtype=torch.float)
+    dist.all_reduce(scaled_norm_tensor, group=group)
+    all_groups_norm = scaled_norm_tensor.item()
+    #print(f"old = {all_groups_norm_old} and new = {all_groups_norm} at rank: {deepspeed.comm.get_rank()}")
+    return all_groups_norm
 
 
 class CheckOverflow(object):
@@ -885,7 +894,8 @@ def clip_gradients(parameters, max_norm=1.0, global_grad_norm=None, mpu=None, ep
     return global_grad_norm
 
 
-def get_global_norm_of_tensors(input_tensors, norm_type=2, mpu=None):
+
+def get_global_norm_of_tensors(input_tensors, norm_type=2, mpu=None, use_graph=False, moe_ep_group=None):
     """Get norm of an iterable of tensors.
 
     This is adapted from torch.nn.utils.clip_grad.clip_grad_norm_ and
@@ -911,7 +921,10 @@ def get_global_norm_of_tensors(input_tensors, norm_type=2, mpu=None):
         total_norm_cuda = torch.stack(all_norms).max()
         if mpu is not None:
             dist.all_reduce(total_norm_cuda, op=dist.ReduceOp.MAX, group=mpu.get_model_parallel_group())
-            total_norm = total_norm_cuda.item()
+
+        if moe_ep_group is not None:
+            dist.all_reduce(total_norm_cuda, op=dist.ReduceOp.MAX, group=moe_ep_group)
+        total_norm = total_norm_cuda[0].item()
     else:
         for t in input_tensors:
             all_norms.append(t.data.float().norm(norm_type))
@@ -919,7 +932,11 @@ def get_global_norm_of_tensors(input_tensors, norm_type=2, mpu=None):
 
         if mpu is not None:
             dist.all_reduce(total_norm_cuda, op=dist.ReduceOp.SUM, group=mpu.get_model_parallel_group())
-        total_norm = total_norm_cuda.item()**(1. / norm_type)
+
+        if moe_ep_group is not None:
+            dist.all_reduce(total_norm_cuda, op=dist.ReduceOp.SUM, group=moe_ep_group)
+
+        total_norm = total_norm_cuda[0].item()**(1. / norm_type)
 
     if total_norm == float('inf') or total_norm == -float('inf') or total_norm != total_norm:
         total_norm = -1
@@ -1049,3 +1066,45 @@ def required_torch_version(min_version=None, max_version=None):
         return False
 
     return True
+
+
+def get_norm_with_moe_layers(non_expert_norm, mpu, expert_tensors, norm_type=2):
+    """ Compute the global norm with MoE experts
+
+    Inputs:
+    non_expert_norm (float) : the calculated norm of the non-expert params
+    expert_tensors (Dict[ep_name, List[Tensor]): Dictionary of expert group name to list of grad tensors
+    norm_type (int): the norm to use
+
+    Returns:
+        if norm is (-/+) inf, returns -1
+        otherwise the global norm (float)
+    """
+
+    def to_tensor(v):
+        return get_accelerator().FloatTensor(float(v)).detach()
+
+    group_norms = [non_expert_norm]
+    for exp_name, tensors in expert_tensors.items():
+        group_norm = get_global_norm_of_tensors(input_tensors=tensors,
+                                                mpu=mpu,
+                                                norm_type=norm_type,
+                                                use_graph=False,
+                                                moe_ep_group=groups._get_expert_parallel_group(exp_name))
+        group_norms.append(group_norm)
+
+    # check if all norms are valid
+    group_norms = torch.stack([to_tensor(norm) for norm in group_norms])
+    if group_norms.eq(-1).any():
+        return -1
+
+    # combine norms
+    if norm_type == inf:
+        total_norm = group_norms.max().item()
+    else:
+        total_norm = group_norms.pow(norm_type).sum()
+        total_norm = total_norm.item()**(1. / norm_type)
+        if total_norm == float('inf') or total_norm == -float('inf'):
+            total_norm = -1
+
+    return total_norm
