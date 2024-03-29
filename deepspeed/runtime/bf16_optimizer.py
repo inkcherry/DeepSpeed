@@ -17,9 +17,9 @@ from deepspeed.runtime.utils import (get_global_norm_of_tensors, clip_tensors_by
                                      align_dense_tensors, all_gather_dp_groups, bwc_tensor_model_parallel_rank,
                                      is_model_parallel_parameter, see_memory_usage)
 
-from deepspeed.utils import link_hp_params, fragment_address, is_model_parallel_parameter, see_memory_usage, graph_process, get_norm_with_moe_layers
+from deepspeed.runtime.utils import is_model_parallel_parameter, see_memory_usage, get_norm_with_moe_layers
 from deepspeed.moe.utils import is_moe_param, is_moe_param_group
-from deepspeed.utils import link_hp_params, lazy_init_hp_params_optimizer_state, fragment_address, groups, map_to_flat_opt_states
+from deepspeed.utils import link_hp_params, fragment_address, groups
 from deepspeed.checkpoint import enable_universal_checkpoint
 from deepspeed.checkpoint.constants import (DS_VERSION, PARTITION_COUNT, BASE_OPTIMIZER_STATE,
                                             SINGLE_PARTITION_OF_FP32_GROUPS, CLIP_GRAD, GROUP_PADDINGS,
@@ -41,8 +41,6 @@ class BF16_Optimizer(ZeROOptimizer):
                  timers=None,
                  grad_acc_dtype=None,
                  accumulate_grads_via_hooks=False,
-                 graph_harvesting=False,
-                 immediate_grad_update=False,
                  has_moe_layers=False):
         super().__init__()
         see_memory_usage('begin bf16_optimizer', force=True)
@@ -285,8 +283,7 @@ class BF16_Optimizer(ZeROOptimizer):
         non_expert_grads_for_norm, expert_grads_for_norm = self.get_grads_for_norm()
         non_expert_groups_norm = get_global_norm_of_tensors(input_tensors=non_expert_grads_for_norm,
                                                             mpu=self.mpu,
-                                                            norm_type=self.norm_type,
-                                                            use_graph=self.graph_harvesting)
+                                                            norm_type=self.norm_type)
         all_groups_norm = non_expert_groups_norm
         if self.has_moe_layers:
             all_groups_norm = get_norm_with_moe_layers(non_expert_groups_norm,

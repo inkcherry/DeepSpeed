@@ -895,7 +895,7 @@ def clip_gradients(parameters, max_norm=1.0, global_grad_norm=None, mpu=None, ep
 
 
 
-def get_global_norm_of_tensors(input_tensors, norm_type=2, mpu=None, use_graph=False, moe_ep_group=None):
+def get_global_norm_of_tensors(input_tensors, norm_type=2, mpu=None, moe_ep_group=None):
     """Get norm of an iterable of tensors.
 
     This is adapted from torch.nn.utils.clip_grad.clip_grad_norm_ and
@@ -1089,7 +1089,6 @@ def get_norm_with_moe_layers(non_expert_norm, mpu, expert_tensors, norm_type=2):
         group_norm = get_global_norm_of_tensors(input_tensors=tensors,
                                                 mpu=mpu,
                                                 norm_type=norm_type,
-                                                use_graph=False,
                                                 moe_ep_group=groups._get_expert_parallel_group(exp_name))
         group_norms.append(group_norm)
 

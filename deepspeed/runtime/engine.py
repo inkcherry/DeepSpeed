@@ -1486,9 +1486,7 @@ class DeepSpeedEngine(Module):
                                    dp_process_group=self.seq_data_parallel_group,
                                    timers=timers,
                                    grad_acc_dtype=self.get_data_types()[1],
-                                   accumulate_grads_via_hooks=self._config.bfloat16_accumulate_grads_via_hooks,
-                                   graph_harvesting=self.graph_harvesting(),
-                                   immediate_grad_update=self._config.bfloat16_immediate_grad_update,
+                                   accumulate_grads_via_hooks=False,                          
                                    has_moe_layers=self.has_moe_layers)
 
         return optimizer
@@ -2456,23 +2454,15 @@ class DeepSpeedEngine(Module):
         # utilize dp_world_size for allreduce average
         dp_world_size = dist.get_world_size(groups._get_data_parallel_group())
         for ep_name, expert_grads_group in expert_grads.items():
-            ep_dp_group = groups._get_expert_data_parallel_group(ep_name)
-            split_sparse_tensor_buckets, split_dense_tensor_buckets = split_half_float_double_sparse(
-                expert_grads_group)
-
-            for _, sparse_bucket_tuple in enumerate(split_sparse_tensor_buckets):
-                if sparse_bucket_tuple:
-                    bucket_type, sparse_bucket = sparse_bucket_tuple
-                    self.sparse_allreduce_no_retain(sparse_bucket, dp_group=ep_dp_group, dp_world_size=dp_world_size)
-
-            for _, dense_bucket_tuple in enumerate(split_dense_tensor_buckets):
-                if dense_bucket_tuple:
-                    bucket_type, dense_bucket = dense_bucket_tuple
-                    # Separate between diff groups
-                    self.allreduce_no_retain(dense_bucket,
-                                             dp_group=ep_dp_group,
-                                             numel_per_bucket=elements_per_buffer,
-                                             dp_world_size=dp_world_size)
+            expert_split_buckets = split_half_float_double_sparse(expert_grads_group)
+            for i, bucket_tuple in enumerate(expert_split_buckets):
+                bucket_type, bucket = bucket_tuple
+                if bucket_type == SparseTensor.type():
+                    self.sparse_allreduce_no_retain(bucket, groups._get_expert_data_parallel_group(ep_name),dp_world_size=dp_world_size)
+                else:
+                    self.allreduce_no_retain(bucket,
+                                dp_group=groups._get_expert_data_parallel_group(ep_name),
+                                numel_per_bucket=elements_per_buffer,dp_world_size=dp_world_size)
 
     def buffered_allreduce_fallback(self, grads=None, elements_per_buffer=500000000):
         if grads is None:
