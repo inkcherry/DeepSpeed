@@ -9,14 +9,15 @@ This file is adapted from FP16_Optimizer in NVIDIA/apex
 
 import torch
 from torch._utils import _flatten_dense_tensors, _unflatten_dense_tensors
-
 from deepspeed.runtime.base_optimizer import DeepSpeedOptimizer
-from deepspeed.runtime.utils import get_global_norm, get_grad_norm, CheckOverflow, get_weight_norm, required_torch_version, get_norm_with_moe_layers
+from deepspeed.runtime.utils import get_global_norm, get_flattened_grad_norm, CheckOverflow, get_weight_norm, required_torch_version, get_norm_with_moe_layers, is_model_parallel_parameter
 from deepspeed.runtime.fp16.loss_scaler import INITIAL_LOSS_SCALE, SCALE_WINDOW, MIN_LOSS_SCALE
 from deepspeed.utils import logger, log_dist
 from deepspeed.checkpoint.constants import OPTIMIZER_STATE_DICT, CLIP_GRAD
 from deepspeed.accelerator import get_accelerator
 from deepspeed.moe.utils import is_moe_param_group
+from deepspeed.runtime.constants import PIPE_REPLICATED
+from deepspeed.utils.bwc import bwc_tensor_model_parallel_rank
 
 OVERFLOW_CHECK_TIMER = 'overflow_check'
 COMPUTE_NORM_TIMER = 'compute_norm'
@@ -205,6 +206,15 @@ class FP16_Optimizer(DeepSpeedOptimizer):
         self.custom_loss_scaler = True
         self.external_loss_scale = loss_scale
 
+    def _require_avoid_recompute_norm(self, p, tensor_model_parallel_rank):
+
+        if hasattr(p, PIPE_REPLICATED) and p.ds_pipe_replicated:
+            return True
+            # Filter to avoid over-counting replicated tensors from tensor
+            # model parallelism
+        if (tensor_model_parallel_rank > 0) and not is_model_parallel_parameter(p):
+            return True
+
     def step(self, closure=None):
         """
         Not supporting closure.
@@ -237,6 +247,7 @@ class FP16_Optimizer(DeepSpeedOptimizer):
             return self.overflow
 
         grads_groups_flat = []
+        duplicated_params_norm_mask = []
         non_experts_grads_for_norm = []
         expert_grads_for_norm = {}
         assert len(self.fp16_groups) == len(self.optimizer.param_groups)
@@ -250,8 +261,17 @@ class FP16_Optimizer(DeepSpeedOptimizer):
                     for p in group
                 ]))
 
+            # duplicated_norm_mask_TP.append(_flatten_dense_tensors([ torch.zeros(p.size(), dtype=p.dtype, device=p.device)  if    )
+
+            cur_group_mask = []
             for p in group:
+                if p.grad is None or self._require_avoid_recompute_norm(p, bwc_tensor_model_parallel_rank(self.mpu)):
+                    cur_group_mask.append(torch.zeros(p.size(), dtype=bool, device=p.device))
+                else:
+                    cur_group_mask.append(torch.ones(p.size(), dtype=bool, device=p.device))
+
                 p.grad = None
+            duplicated_params_norm_mask.append(_flatten_dense_tensors(cur_group_mask))
 
             self.fp32_groups_flat[i].grad = grads_groups_flat[i]
             param_group = self.optimizer.param_groups[i]
@@ -264,7 +284,9 @@ class FP16_Optimizer(DeepSpeedOptimizer):
 
         self.timers(COMPUTE_NORM_TIMER).start()
 
-        all_groups_norm = get_grad_norm(non_experts_grads_for_norm, mpu=self.mpu)
+        all_groups_norm = get_flattened_grad_norm(non_experts_grads_for_norm,
+                                                  mpu=self.mpu,
+                                                  grad_norm_mask=duplicated_params_norm_mask)
 
         self.timers(COMPUTE_NORM_TIMER).stop()
 
