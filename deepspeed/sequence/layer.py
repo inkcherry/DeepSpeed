@@ -158,8 +158,6 @@ class DistributedAttention(torch.nn.Module):
             grad_fn_k = key.grad_fn.next_functions[0][0]
             grad_fn_k.register_prehook(bwd_hook(type='k'))
             
-            
-
         self.overlap_handles['fwd_q'].wait()
         self.overlap_handles['fwd_k'].wait()
 
@@ -169,7 +167,5 @@ class DistributedAttention(torch.nn.Module):
 
         output = _SeqAllToAll.apply(self.spg, context_layer, self.gather_idx, self.scatter_idx,self.sp_stream)
 
-
         #out e.g., [s/p::h]
         return output
-
