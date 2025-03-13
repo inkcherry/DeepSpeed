@@ -264,8 +264,6 @@ class TensorParallel_Layer(nn.Module, ABC):
         return new_obj
     
         
-        
-    
     def extra_repr(self):
         if self.weight is not None:
             out_features, in_features = self.weight.shape[-2:] if self.weight is not None else (None, None)

@@ -247,7 +247,7 @@ class DeepSpeedEngine(Module):
         self._configure_with_arguments(args, mpu)
         self._do_sanity_check()
         if self.autotp_size() > 1:
-            self._configure_tensor_parallel_states(model)
+            self._configure_tensor_parallel(model, self.tensor_parallel_config())
         see_memory_usage(f"DeepSpeed Engine: After args sanity test", force=self.memory_breakdown())
         if mpu is not None:
             if self.elasticity_enabled():
@@ -415,6 +415,10 @@ class DeepSpeedEngine(Module):
                 else:
                     p.ds_offload = False
 
+    
+    def _configure_tensor_parallel(self, model, tp_config):
+        self._configure_tensor_parallel_states(model)
+        configure_tensor_parallel_runtime(tp_config)
         
     def _configure_tensor_parallel_states(self, model):
         """
@@ -428,9 +432,7 @@ class DeepSpeedEngine(Module):
         assert self.zero_optimization_stage(
         ) <= 2, "Currently, the compatibility between 'autotp' and 'zero_stage = 3' has not been validated"
 
-        configure_tensor_parallel_runtime(self.tensor_parallel_config())
 
-        
         self.mpu = groups
         self.mpu._init_tp_mesh_device(tensor_model_parallel_size=self.autotp_size())
 
