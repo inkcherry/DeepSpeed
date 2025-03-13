@@ -15,14 +15,13 @@ class AUTOTP_MODE(Enum):
     INFERENCE = "INFERENCE"
 
 
-
 class TPConfig(DeepSpeedConfigModel):
     """ Configure tensor parallelism settings """
 
     tp_size: int = 1
     """ Number of devices to split the model across using tensor parallelism. """
 
-    overlap_comm : bool = False
+    overlap_comm: bool = False
     """ Whether to overlap communication with computation. Currently, only allreduce supports overlap. """
 
     tp_grain_size: int = 1
@@ -51,6 +50,8 @@ class TPTrainingConfig(DeepSpeedConfigModel):
     In automatic tensor-parallelism training, 'tensor_parallel_size'
     When set to 0, indicates that it is disabled.
     """
+    overlap_comm: bool = False
+    """ Whether to overlap communication with computation. Currently, only allreduce supports overlap. """
 
     tensor_parallel: TPConfig = Field({}, alias="tp")
     """

@@ -91,24 +91,24 @@ class AsyncColumnParallel(torch.autograd.Function):
         ctx.group = group
         output = torch.matmul(input, weight.transpose(-1, -2))
         if bias is not None:
-            output+=bias
-        
+            output += bias
+
         ctx.save_for_backward(input, weight)
 
         return output
+
     @staticmethod
     def backward(ctx: Any, grad_output: torch.Tensor) -> Tuple[None, torch.Tensor]:
-        
- 
-        input, weight = ctx.saved_tensors                                  
+
+        input, weight = ctx.saved_tensors
         grad_input = grad_output.matmul(weight)
-        handle=dist.all_reduce(grad_input.contiguous(), group=ctx.group, async_op=True)
-        grad_weight = grad_output.view(-1,grad_output.shape[-1]).t().matmul(input.view(-1, input.shape[-1]))
+        handle = dist.all_reduce(grad_input.contiguous(), group=ctx.group, async_op=True)
+        grad_weight = grad_output.view(-1, grad_output.shape[-1]).t().matmul(input.view(-1, input.shape[-1]))
         grad_bias = grad_output.sum(0) if ctx.use_bias else None
         handle.wait()
         return None, grad_input, grad_weight, grad_bias
-        
-    
+
+
 class ColumnParallel(torch.autograd.Function):
     """
     Custom autograd function for column-wise parallelism.
@@ -137,7 +137,6 @@ class ColumnParallel(torch.autograd.Function):
 
         dist.all_reduce(grad_output.contiguous(), group=ctx.group)
         return None, grad_output
-    
 
 
 class TensorParallel_Layer(nn.Module, ABC):
@@ -155,16 +154,15 @@ class TensorParallel_Layer(nn.Module, ABC):
         name (Optional[str]): The name of the layer, if provided.
     """
     ##### Initialize Parameter List #####
-    
-    # keep_module_on_host determines whether to keep the module on the host. 
-    # Checkpoints are first loaded to the host (sometimes directly from disk to avoid filling host memory), 
+
+    # keep_module_on_host determines whether to keep the module on the host.
+    # Checkpoints are first loaded to the host (sometimes directly from disk to avoid filling host memory),
     # so an additional copy is unnecessary.
     keep_module_on_host: bool = False
-    
+
     ##### Runtime Parameter List #####
     overlap_comm: bool = False
     """ Whether to overlap communication with computation. Currently, only allreduce supports overlap. """
-
 
     def __init__(self, mp_group: Optional[dist.ProcessGroup], **kwargs: Any):
         """
@@ -198,7 +196,7 @@ class TensorParallel_Layer(nn.Module, ABC):
             value (bool): The new value for keep_module_on_host.
         """
         cls.keep_module_on_host = value
-    
+
     @abstractmethod
     def forward(self, input):
         """
@@ -262,8 +260,7 @@ class TensorParallel_Layer(nn.Module, ABC):
 
         memo[id(self)] = new_obj
         return new_obj
-    
-        
+
     def extra_repr(self):
         if self.weight is not None:
             out_features, in_features = self.weight.shape[-2:] if self.weight is not None else (None, None)
@@ -297,13 +294,14 @@ class TensorParallel_Layer(nn.Module, ABC):
                 tensor.data = torch.empty(0, device=tensor.device)
             return cloned_tensor
 
+
 def configure_tensor_parallel_runtime(config):
-    runtime_keys=['overlap_comm']
+    runtime_keys = ['overlap_comm']
     for key in runtime_keys:
         if hasattr(config, key):
             setattr(TensorParallel_Layer, key, getattr(config, key))
-        
-        
+
+
 class GatherReplacedLayerParams:
     """
     A context manager for gathering parameters of a replaced layer, enabling partitioning and gathering functionality
@@ -457,8 +455,8 @@ class LinearLayer(TensorParallel_Layer):
             if self.bias is not None:
                 output += self.bias
         else:
-            output = AsyncColumnParallel.apply(self.mp_group,input, self.weight, self.bias)
-            
+            output = AsyncColumnParallel.apply(self.mp_group, input, self.weight, self.bias)
+
         return output
 
     @torch.no_grad()
