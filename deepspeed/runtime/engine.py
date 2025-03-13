@@ -37,8 +37,7 @@ from deepspeed.runtime.fp16.unfused_optimizer import FP16_UnfusedOptimizer
 from deepspeed.runtime.bf16_optimizer import BF16_Optimizer
 
 from deepspeed.linear.optimized_linear import LoRAOptimizedLinear
-from deepspeed.module_inject.layers import GatherReplacedLayerParams
-
+from deepspeed.module_inject.layers import GatherReplacedLayerParams, configure_tensor_parallel_runtime
 from deepspeed.runtime.config import DEEPSPEED_OPTIMIZERS, \
     ADAGRAD_OPTIMIZER, ADAM_OPTIMIZER, ADAMW_OPTIMIZER, LAMB_OPTIMIZER, ONEBIT_ADAM_OPTIMIZER, ONEBIT_LAMB_OPTIMIZER, \
     TORCH_ADAM_PARAM, ADAM_W_MODE, ADAM_W_MODE_DEFAULT, ZERO_ONE_ADAM_OPTIMIZER, MUADAM_OPTIMIZER, MUADAMW_OPTIMIZER, \
@@ -424,12 +423,14 @@ class DeepSpeedEngine(Module):
         and registering a pre-hook to ensure that the Dataloader inputs are consistent across ranks.
         """
         self._set_client_model(model)
-
         # sanity check
         # currently, the compatibility between 'autotp' and 'zero > 1' has not been validated
         assert self.zero_optimization_stage(
         ) <= 2, "Currently, the compatibility between 'autotp' and 'zero_stage = 3' has not been validated"
 
+        configure_tensor_parallel_runtime(self.tensor_parallel_config())
+
+        
         self.mpu = groups
         self.mpu._init_tp_mesh_device(tensor_model_parallel_size=self.autotp_size())
 

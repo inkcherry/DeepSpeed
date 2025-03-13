@@ -8,15 +8,13 @@ from deepspeed.runtime.config_utils import DeepSpeedConfigModel
 import torch
 from pydantic import Field
 from typing import Optional
-from deepspeed.module_inject.layers import TensorParallel_Layer
 
 
 class AUTOTP_MODE(Enum):
     TRAINING = "TRAINING"
     INFERENCE = "INFERENCE"
 
-def configure_tensor_parallel_runtime(config):
-    TensorParallel_Layer.overlap_comm = config['overlap_comm']
+
 
 class TPConfig(DeepSpeedConfigModel):
     """ Configure tensor parallelism settings """
@@ -53,6 +51,9 @@ class TPTrainingConfig(DeepSpeedConfigModel):
     In automatic tensor-parallelism training, 'tensor_parallel_size'
     When set to 0, indicates that it is disabled.
     """
+    overlap_comm: bool = False
+    """ Whether to overlap communication with computation. Currently, only allreduce supports overlap. """
+
     tensor_parallel: TPConfig = Field({}, alias="tp")
     """
     Configuration for tensor parallelism used to split the model across several

@@ -137,6 +137,7 @@ class ColumnParallel(torch.autograd.Function):
 
         dist.all_reduce(grad_output.contiguous(), group=ctx.group)
         return None, grad_output
+    
 
 
 class TensorParallel_Layer(nn.Module, ABC):
@@ -153,10 +154,17 @@ class TensorParallel_Layer(nn.Module, ABC):
         support_training (bool): Flag indicating whether the layer supports training (default: False).
         name (Optional[str]): The name of the layer, if provided.
     """
-
-    # keep_module_on_host is used to keep the module on the host. Checkpoints are loaded to the host first (in some
-    # cases it can be done from the disk even to prevent filling host's memory), thus no need to create a new copy.
+    ##### Initialize Parameter List #####
+    
+    # keep_module_on_host determines whether to keep the module on the host. 
+    # Checkpoints are first loaded to the host (sometimes directly from disk to avoid filling host memory), 
+    # so an additional copy is unnecessary.
     keep_module_on_host: bool = False
+    
+    ##### Runtime Parameter List #####
+    overlap_comm: bool = False
+    """ Whether to overlap communication with computation. Currently, only allreduce supports overlap. """
+
 
     def __init__(self, mp_group: Optional[dist.ProcessGroup], **kwargs: Any):
         """
@@ -190,7 +198,7 @@ class TensorParallel_Layer(nn.Module, ABC):
             value (bool): The new value for keep_module_on_host.
         """
         cls.keep_module_on_host = value
-
+    
     @abstractmethod
     def forward(self, input):
         """
@@ -254,7 +262,10 @@ class TensorParallel_Layer(nn.Module, ABC):
 
         memo[id(self)] = new_obj
         return new_obj
-
+    
+        
+        
+    
     def extra_repr(self):
         if self.weight is not None:
             out_features, in_features = self.weight.shape[-2:] if self.weight is not None else (None, None)
@@ -288,7 +299,13 @@ class TensorParallel_Layer(nn.Module, ABC):
                 tensor.data = torch.empty(0, device=tensor.device)
             return cloned_tensor
 
-
+def configure_tensor_parallel_runtime(config):
+    runtime_keys=['overlap_comm']
+    for key in runtime_keys:
+        if hasattr(config, key):
+            setattr(TensorParallel_Layer, key, getattr(config, key))
+        
+        
 class GatherReplacedLayerParams:
     """
     A context manager for gathering parameters of a replaced layer, enabling partitioning and gathering functionality
@@ -435,7 +452,7 @@ class LinearLayer(TensorParallel_Layer):
             self.config_tp_params(self.bias)
 
     def forward(self, input):
-        if True:
+        if not self.__class__.overlap_comm:
             if getattr(self, 'mp_group', None) is not None:
                 input = ColumnParallel.apply(self.mp_group, input)
             output = torch.matmul(input, self.weight.transpose(-1, -2))
