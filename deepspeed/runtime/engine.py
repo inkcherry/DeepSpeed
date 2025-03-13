@@ -413,6 +413,7 @@ class DeepSpeedEngine(Module):
                 else:
                     p.ds_offload = False
 
+        
     def _configure_tensor_parallel_states(self, model):
         """
         Configures the tensor parallel states for the model.
@@ -899,6 +900,9 @@ class DeepSpeedEngine(Module):
     def zero_ignore_unused_parameters(self):
         return self._config.zero_config.ignore_unused_parameters
 
+    def tensor_parallel_config(self):
+        return self._config.tensor_parallel_config
+    
     def autotp_size(self):
         return self._config.tensor_parallel_config.autotp_size
 

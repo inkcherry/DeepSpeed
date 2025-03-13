@@ -8,18 +8,24 @@ from deepspeed.runtime.config_utils import DeepSpeedConfigModel
 import torch
 from pydantic import Field
 from typing import Optional
+from deepspeed.module_inject.layers import TensorParallel_Layer
 
 
 class AUTOTP_MODE(Enum):
     TRAINING = "TRAINING"
     INFERENCE = "INFERENCE"
 
+def configure_tensor_parallel_runtime(config):
+    TensorParallel_Layer.overlap_comm = config['overlap_comm']
 
 class TPConfig(DeepSpeedConfigModel):
     """ Configure tensor parallelism settings """
 
     tp_size: int = 1
     """ Number of devices to split the model across using tensor parallelism. """
+
+    overlap_comm : bool = False
+    """ Whether to overlap communication with computation. Currently, only allreduce supports overlap. """
 
     tp_grain_size: int = 1
     "The variable required by the autoTP parser has not been activated in training yet"
